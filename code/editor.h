@@ -106,7 +106,7 @@ void zero(void *memory, uint size);
 
 typedef uintl time; /* in nanoseconds */
 
-#define TIME_SECONDS_FACTOR 1000000000
+#define TIME_SECONDS_FACTOR 1e9
 
 time get_time(void);
 

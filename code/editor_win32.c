@@ -15,7 +15,7 @@ inline time get_time(void)
 {
 	LARGE_INTEGER counter;
 	QueryPerformanceCounter(&counter);
-	return counter.QuadPart * 1000000000 / platform.performance_frequency;
+	return counter.QuadPart / platform.performance_frequency * 1e9;
 }
 
 inline void *allocate(uint size)
