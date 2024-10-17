@@ -185,8 +185,6 @@ void _assert_vulkan_result(VkResult result, const char *file, uint line);
 
 #define assert_vulkan_result(result) _assert_vulkan_result(result, __FILE__, __LINE__)
 
-void vulkan_get_physical_device(void);
-
 extern struct global
 {
 	bit terminability : 1;

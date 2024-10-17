@@ -1,11 +1,5 @@
 #include "editor.h"
 
-static VKAPI_ATTR VkBool32 VKAPI_CALL process_vulkan_message(
-	VkDebugUtilsMessageSeverityFlagBitsEXT      message_severity,
-	VkDebugUtilsMessageTypeFlagsEXT             message_types,
-	const VkDebugUtilsMessengerCallbackDataEXT *callback_data,
-	void*                                       user_data);
-
 struct vulkan vulkan =
 {
 
@@ -18,17 +12,6 @@ struct global global =
 thread_local struct context context =
 {
 };
-
-static void initialize(void);
-static void process_messages(void);
-
-#if defined(ON_WIN32)
-	#include "editor_win32.c"
-#elif defined(ON_LINUX)
-	#include "editor_linux.c"
-#endif
-
-static void render_frame(void);
 
 void _report(const char *file, uint line, severity severity, const char *message, ...)
 {
@@ -46,8 +29,6 @@ void _report(const char *file, uint line, severity severity, const char *message
 	vprintf(message, vargs);
 	va_end(vargs);
 }
-
-const char default_font_file_path[] = "./data/consola.ttf";
 
 static const utf32 initial_runes_of_font[] = { 'A', 'B' };
 
@@ -131,7 +112,118 @@ void _assert_vulkan_result(VkResult result, const char *file, uint line)
 	assert(result == VK_SUCCESS);
 }
 
-void vulkan_get_physical_device(void)
+static void initialize(void);
+static void process_messages(void);
+
+static VKAPI_ATTR VkBool32 VKAPI_CALL process_vulkan_message(
+	VkDebugUtilsMessageSeverityFlagBitsEXT      message_severity,
+	VkDebugUtilsMessageTypeFlagsEXT             message_types,
+	const VkDebugUtilsMessengerCallbackDataEXT *callback_data,
+	void*                                       user_data);
+
+#if defined(ON_WIN32)
+	#include "editor_win32.c"
+#elif defined(ON_LINUX)
+	#include "editor_linux.c"
+#endif
+
+static void vulkan_get_physical_device(void);
+
+static void render_frame(void)
+{
+
+}
+
+int main(void)
+{
+	initialize();
+
+	/* compile shaders */
+#if 0
+	{
+		printf("loading shaders...\n");
+
+		shader shaders[] =
+		{
+			{ 0, "code/shader.vert" },
+			{ 1, "code/shader.frag" },
+		};
+
+		const uint shaders_count = countof(shaders);
+
+		uint shaders_data_size = 0;
+		for (uint i = 0; i < shaders_count; ++i)
+		{
+			shader *shader = shaders + i;
+			shader->handle = open_file(shader->path);
+			shader->size = 1 + get_size_of_file(shader->handle);
+			shaders_data_size += shader->size;
+		}
+
+		char *shaders_data = allocate(shaders_data_size);
+		char *shader_data = shaders_data;
+		for (uint i = 0; i < shaders_count; ++i)
+		{
+			shader *shader = shaders + i;
+			shader->data = shader_data;
+			shader_data += shader->size;
+			read_from_file(shader->data, shader->size, shader->handle);
+			shader->data[shader->size - 1] = 0;
+			close_file(shader->handle);
+		}
+	}
+#endif
+
+	uintl   frame_beginning_time = get_time();
+	uintl   frame_ending_time;
+	float32 frame_elapsed_time;
+	uint    second_frames_count = 0;
+	float32 second_elapsed_time = 0;
+	while (!global.terminability)
+	{
+		{
+			if (second_elapsed_time >= 1.f)
+			{
+				report_verbose("FPS: %u\n", second_frames_count);
+				second_frames_count = 0;
+				second_elapsed_time = 0;
+			}
+			frame_ending_time = get_time();
+			frame_elapsed_time = (float32)(frame_ending_time - frame_beginning_time) / TIME_SECONDS_FACTOR;
+			second_elapsed_time += frame_elapsed_time;
+			second_frames_count += 1;
+			frame_beginning_time = frame_ending_time;
+		}
+
+		process_messages();
+	}
+
+	return 0;
+}
+
+static VKAPI_ATTR VkBool32 VKAPI_CALL process_vulkan_message(
+	VkDebugUtilsMessageSeverityFlagBitsEXT      message_severity,
+	VkDebugUtilsMessageTypeFlagsEXT             message_types,
+	const VkDebugUtilsMessengerCallbackDataEXT *callback_data,
+	void*                                       user_data)
+{
+	if (message_severity < VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) return VK_FALSE;
+
+	const char *severity;
+	switch (message_severity)
+	{
+	case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT: severity = "VERBOSE"; break;
+	case VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT:    severity = "COMMENT"; break;
+	case VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT: severity = "CAUTION"; break;
+	case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT:   severity = "FAILURE"; break;
+	default: unreachable();
+	}
+
+	fprintf(stderr, "[%s] %s\n", severity, callback_data->pMessage);
+	return VK_FALSE;
+}
+
+static void vulkan_get_physical_device(void)
 {
 	uint devices_count;
 	vkEnumeratePhysicalDevices(vulkan.instance, &devices_count, 0);
@@ -287,102 +379,4 @@ void vulkan_get_physical_device(void)
 		break;
 	}
 	assert(vulkan.physical_device);
-}
-
-void render_frame(void)
-{
-
-}
-
-int main(void)
-{
-	initialize();
-
-	vulkan_get_physical_device();
-
-	/* compile shaders */
-#if 0
-	{
-		printf("loading shaders...\n");
-
-		shader shaders[] =
-		{
-			{ 0, "code/shader.vert" },
-			{ 1, "code/shader.frag" },
-		};
-
-		const uint shaders_count = countof(shaders);
-
-		uint shaders_data_size = 0;
-		for (uint i = 0; i < shaders_count; ++i)
-		{
-			shader *shader = shaders + i;
-			shader->handle = open_file(shader->path);
-			shader->size = 1 + get_size_of_file(shader->handle);
-			shaders_data_size += shader->size;
-		}
-
-		char *shaders_data = allocate(shaders_data_size);
-		char *shader_data = shaders_data;
-		for (uint i = 0; i < shaders_count; ++i)
-		{
-			shader *shader = shaders + i;
-			shader->data = shader_data;
-			shader_data += shader->size;
-			read_from_file(shader->data, shader->size, shader->handle);
-			shader->data[shader->size - 1] = 0;
-			close_file(shader->handle);
-		}
-	}
-#endif
-
-	load_font(default_font_file_path, 0, &default_font);
-
-	uintl   frame_beginning_time = get_time();
-	uintl   frame_ending_time;
-	float32 frame_elapsed_time;
-	uint    second_frames_count = 0;
-	float32 second_elapsed_time = 0;
-	while (!global.terminability)
-	{
-		{
-			if (second_elapsed_time >= 1.f)
-			{
-				report_verbose("FPS: %u\n", second_frames_count);
-				second_frames_count = 0;
-				second_elapsed_time = 0;
-			}
-			frame_ending_time = get_time();
-			frame_elapsed_time = (float32)(frame_ending_time - frame_beginning_time) / TIME_SECONDS_FACTOR;
-			second_elapsed_time += frame_elapsed_time;
-			second_frames_count += 1;
-			frame_beginning_time = frame_ending_time;
-		}
-
-		process_messages();
-	}
-
-	return 0;
-}
-
-static VKAPI_ATTR VkBool32 VKAPI_CALL process_vulkan_message(
-	VkDebugUtilsMessageSeverityFlagBitsEXT      message_severity,
-	VkDebugUtilsMessageTypeFlagsEXT             message_types,
-	const VkDebugUtilsMessengerCallbackDataEXT *callback_data,
-	void*                                       user_data)
-{
-	if (message_severity < VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) return VK_FALSE;
-
-	const char *severity;
-	switch (message_severity)
-	{
-	case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT: severity = "VERBOSE"; break;
-	case VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT:    severity = "COMMENT"; break;
-	case VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT: severity = "CAUTION"; break;
-	case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT:   severity = "FAILURE"; break;
-	default: unreachable();
-	}
-
-	fprintf(stderr, "[%s] %s\n", severity, callback_data->pMessage);
-	return VK_FALSE;
 }
