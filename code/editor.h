@@ -83,6 +83,8 @@ typedef struct
 	bit64 glyphs_flags[2];
 } font;
 
+font default_font;
+
 void load_font(const char *file_path, uintb font_index, font *font);
 
 void unload_font(font *font);
@@ -120,3 +122,13 @@ handle open_file(const char *path);
 uintl get_size_of_file(handle handle);
 uint read_from_file(void *buffer, uint size, handle handle);
 void close_file(handle handle);
+
+extern struct global
+{
+	bit terminability : 1;
+} global;
+
+extern thread_local struct context
+{
+	uintl clock_time;
+} context;

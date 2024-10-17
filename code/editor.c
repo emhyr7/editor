@@ -9,18 +9,17 @@ static void process_messages(void);
 	#include "editor_linux.c"
 #endif
 
+struct global global =
+{
+};
+
+thread_local struct context context =
+{
+};
+
 static void render_frame(void);
 
 const char default_font_file_path[] = "./data/consola.ttf";
-
-struct
-{
-	float32 frame_elapsed_time;
-
-	bit quit_requested : 1;
-
-	font default_font;
-} global;
 
 static vertex global_verticies[] =
 {
@@ -34,11 +33,6 @@ static ivec3 global_indicies[] =
 	{ 0, 1, 3 },
 	{ 1, 2, 3 },
 };
-
-thread_local struct
-{
-	uintl clock_time;
-} context;
 
 static const utf32 initial_runes_of_font[] = { 'A', 'B' };
 
@@ -153,13 +147,14 @@ int main(void)
 	}
 #endif
 
-	load_font(default_font_file_path, 0, &global.default_font);
+	load_font(default_font_file_path, 0, &default_font);
 
 	time    frame_beginning_time = get_time();
 	time    frame_ending_time;
+	float32 frame_elapsed_time;
 	uint    second_frames_count = 0;
 	float32 second_elapsed_time = 0;
-	while (!global.quit_requested)
+	while (!global.terminability)
 	{
 		{
 			if (second_elapsed_time >= 1.f)
@@ -169,8 +164,8 @@ int main(void)
 				second_elapsed_time = 0;
 			}
 			frame_ending_time = get_time();
-			global.frame_elapsed_time = (float32)(frame_ending_time - frame_beginning_time) / TIME_SECONDS_FACTOR;
-			second_elapsed_time += global.frame_elapsed_time;
+			frame_elapsed_time = (float32)(frame_ending_time - frame_beginning_time) / TIME_SECONDS_FACTOR;
+			second_elapsed_time += frame_elapsed_time;
 			second_frames_count += 1;
 			frame_beginning_time = frame_ending_time;
 		}

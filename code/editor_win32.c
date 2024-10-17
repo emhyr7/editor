@@ -102,7 +102,7 @@ LRESULT CALLBACK win32_process_window_message(HWND window, UINT message, WPARAM 
 		break;
 
 	case WM_DESTROY:
-		global.quit_requested = 1;
+		global.terminability = 1;
 		PostQuitMessage(0);
 		break;
 
@@ -120,7 +120,7 @@ LRESULT CALLBACK win32_process_window_message(HWND window, UINT message, WPARAM 
 		switch (wparam)
 		{
 		case VK_ESCAPE:
-			global.quit_requested = 1;
+			global.terminability = 1;
 			PostQuitMessage(0);
 			break;
 		}
@@ -140,8 +140,8 @@ static void initialize(void)
 		platform.performance_frequency = frequency.QuadPart;
 	}
 
-	win32.instance = GetModuleHandle(0);
-	GetStartupInfoW(&win32.startup_info);
+	platform.instance = GetModuleHandle(0);
+	GetStartupInfoW(&platform.startup_info);
 
 	/* create the window */
 	{
@@ -150,7 +150,7 @@ static void initialize(void)
 			.cbSize        = sizeof(window_class),
 			.style         = CS_OWNDC,
 			.lpfnWndProc   = win32_process_window_message,
-			.hInstance     = win32.instance,
+			.hInstance     = platform.instance,
 			.lpszClassName = PROGRAM_TITLE"_window_class",
 		};
 
@@ -167,7 +167,7 @@ static void initialize(void)
 
 		assert(RegisterClassExW(&window_class));
 
-		win32.window = CreateWindowExW(
+		platform.window = CreateWindowExW(
 			WS_EX_OVERLAPPEDWINDOW,
 			window_class.lpszClassName,
 			PROGRAM_TITLE,
@@ -180,16 +180,16 @@ static void initialize(void)
 			0,
 			window_class.hInstance,
 			0);
-		assert(win32.window);
-		ShowWindow(win32.window, SW_NORMAL);
+		assert(platform.window);
+		ShowWindow(platform.window, SW_NORMAL);
 	}
 }
 
 static void process_messages(void)
 {
-	while (PeekMessage(&win32.window_message, 0, 0, 0, PM_REMOVE))
+	while (PeekMessage(&platform.window_message, 0, 0, 0, PM_REMOVE))
 	{
-		TranslateMessage(&win32.window_message);
-		DispatchMessage(&win32.window_message);
+		TranslateMessage(&platform.window_message);
+		DispatchMessage(&platform.window_message);
 	}
 }
