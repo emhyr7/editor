@@ -1,16 +1,22 @@
 #include "editor.h"
 
+static VKAPI_ATTR VkBool32 VKAPI_CALL process_vulkan_message(
+	VkDebugUtilsMessageSeverityFlagBitsEXT      message_severity,
+	VkDebugUtilsMessageTypeFlagsEXT             message_types,
+	const VkDebugUtilsMessengerCallbackDataEXT *callback_data,
+	void*                                       user_data);
+
+struct vulkan vulkan =
+{
+
+};
+
 struct global global =
 {
 };
 
 thread_local struct context context =
 {
-};
-
-struct vulkan vulkan =
-{
-
 };
 
 static void initialize(void);
@@ -24,20 +30,24 @@ static void process_messages(void);
 
 static void render_frame(void);
 
-const char default_font_file_path[] = "./data/consola.ttf";
+void _report(const char *file, uint line, severity severity, const char *message, ...)
+{
+	const char *severity_representations[] =
+	{
+		[SEVERITY_VERBOSE] = "VERBOSE",
+		[SEVERITY_COMMENT] = "COMMENT",
+		[SEVERITY_CAUTION] = "CAUTION",
+		[SEVERITY_FAILURE] = "FAILURE",
+	};
+	printf("[%s] %s:%u: ", severity_representations[severity], file, line);
 
-static vertex global_verticies[] =
-{
-	{  0.5,  0.5, 0 },
-	{  0.5, -0.5, 0 },
-	{ -0.5, -0.5, 0 },
-	{ -0.5,  0.5, 0 },
-};
-static ivec3 global_indicies[] =
-{
-	{ 0, 1, 3 },
-	{ 1, 2, 3 },
-};
+	va_list vargs;
+	va_start(vargs, message);
+	vprintf(message, vargs);
+	va_end(vargs);
+}
+
+const char default_font_file_path[] = "./data/consola.ttf";
 
 static const utf32 initial_runes_of_font[] = { 'A', 'B' };
 
@@ -97,6 +107,11 @@ inline void zero(void *memory, uint size)
 	fill(memory, size, 0);
 }
 
+inline int compare_string(const char *left, const char *right)
+{
+	return strcmp(left, right);
+}
+
 inline uintl begin_clock(void)
 {
 	return context.clock_time = get_time();
@@ -108,21 +123,182 @@ inline uintl end_clock(void)
 	return elapsed_time;
 }
 
-void _verify_vulkan_result(VkResult result, const char *file, uint line)
+void _assert_vulkan_result(VkResult result, const char *file, uint line)
 {
 	if (result == VK_SUCCESS) return;
 
-	fprintf(stderr, "FAILURE: `VkResult` is \"%s\" at %s:%u\n", string_VkResult(result), file, line);
+	report_failure("`VkResult` is \"%s\" at %s:%u\n", string_VkResult(result), file, line);
 	assert(result == VK_SUCCESS);
+}
+
+void vulkan_get_physical_device(void)
+{
+	uint devices_count;
+	vkEnumeratePhysicalDevices(vulkan.instance, &devices_count, 0);
+	VkPhysicalDevice devices[devices_count];
+	vkEnumeratePhysicalDevices(vulkan.instance, &devices_count, devices);
+
+	/* determine if the device is suitable */
+	for (uint i = 0; i < devices_count; ++i)
+	{
+		VkPhysicalDevice device = devices[i];
+
+		VkPhysicalDeviceProperties device_properties;
+		VkPhysicalDeviceFeatures device_features;
+		vkGetPhysicalDeviceProperties(device, &device_properties);
+		vkGetPhysicalDeviceFeatures(device, &device_features);
+
+		/* check properties and features */
+		bit suitable =
+			device_properties.deviceType = VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU
+			&& device_features.geometryShader;
+		if (!suitable) continue;
+
+		/* check extensions */
+		{
+			const char *needed_extension_names[] =
+			{
+				VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+			};
+			uint needed_extensions_count = countof(needed_extension_names);
+
+			uint extensions_count;
+			vkEnumerateDeviceExtensionProperties(device, 0, &extensions_count, 0);
+			VkExtensionProperties extension_properties[extensions_count];
+			vkEnumerateDeviceExtensionProperties(device, 0, &extensions_count, extension_properties);
+			for (uint i = 0; i < needed_extensions_count; ++i)
+			{
+				bit good = 0;
+				for (uint j = 0; j < extensions_count; ++j)
+				{
+					if (!compare_string(extension_properties[j].extensionName, needed_extension_names[i]))
+					{
+						good = 1;
+						break;
+					}
+				}
+				if (!good)
+				{
+					suitable = 0;
+					break;
+				}
+			}
+		}
+		if (!suitable) continue;
+
+		uint graphics_family_index = -1;
+		uint presentation_family_index = -1;
+
+		/* check queue families */
+		{
+			uint families_count;
+			vkGetPhysicalDeviceQueueFamilyProperties(device, &families_count, 0);
+			VkQueueFamilyProperties family_properties[families_count];
+			vkGetPhysicalDeviceQueueFamilyProperties(device, &families_count, family_properties);
+			for (uint i = 0; i < families_count; ++i)
+			{
+				VkQueueFamilyProperties *properties = &family_properties[i];
+				if ((graphics_family_index == -1) && (properties->queueFlags & VK_QUEUE_GRAPHICS_BIT)) graphics_family_index = i;
+				if (presentation_family_index == -1)
+				{
+					VkBool32 presentation_supported;
+					vkGetPhysicalDeviceSurfaceSupportKHR(device, i, vulkan.surface, &presentation_supported);
+					if (presentation_supported) presentation_family_index = i;
+				}
+			}
+
+			bit all_families_found = graphics_family_index != -1 && presentation_family_index != -1;
+			if (!all_families_found) suitable = 0;
+		}
+		if (!suitable) continue;
+
+		uint       surface_images_count;
+		VkExtent2D surface_extent;
+
+		/* check surface capabilities */
+		{
+			VkSurfaceCapabilitiesKHR capabilities;
+			vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, vulkan.surface, &capabilities);
+			surface_images_count = capabilities.minImageCount;
+			if (capabilities.currentExtent.width == UINT_MAXIMUM)
+			{
+				rect rect;
+				get_window_rect(&rect);
+				surface_extent.width = clamp(rect.right - rect.left, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
+				surface_extent.height = clamp(rect.base - rect.top, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
+			}
+			else surface_extent = capabilities.currentExtent;
+		}
+
+		VkSurfaceFormatKHR surface_format;
+
+		/* check surface formats */
+		{
+			uint formats_count;
+			vkGetPhysicalDeviceSurfaceFormatsKHR(device, vulkan.surface, &formats_count, 0);
+			VkSurfaceFormatKHR formats[formats_count];
+			vkGetPhysicalDeviceSurfaceFormatsKHR(device, vulkan.surface, &formats_count, formats);
+
+			bit found = 0;
+			for (uint i = 0; i < formats_count; ++i)
+			{
+				VkSurfaceFormatKHR *format = &formats[i];
+				if ((format->format == VK_FORMAT_B8G8R8A8_SRGB) && (format->colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR))
+				{
+					found = 1;
+					surface_format = *format;
+					break;
+				}
+			}
+			if (!found) suitable = 0;
+		}
+		if (!suitable) continue;
+
+		VkPresentModeKHR surface_presentation_mode;
+
+		/* check surface presentation modes  */
+		{
+			uint presentation_modes_count;
+			vkGetPhysicalDeviceSurfacePresentModesKHR(device, vulkan.surface, &presentation_modes_count, 0);
+			VkPresentModeKHR presentation_modes[presentation_modes_count];
+			vkGetPhysicalDeviceSurfacePresentModesKHR(device, vulkan.surface, &presentation_modes_count, presentation_modes);
+
+			bit found = 0;
+			for (uint i = 0; i < presentation_modes_count; ++i)
+			{
+				VkPresentModeKHR presentation_mode = presentation_modes[i];
+				if (presentation_mode == VK_PRESENT_MODE_MAILBOX_KHR)
+				{
+					found = 1;
+					surface_presentation_mode = presentation_mode;
+					break;
+				}
+			}
+			if (!found) surface_presentation_mode = VK_PRESENT_MODE_FIFO_KHR;
+			if (!presentation_modes_count) suitable = 0;
+		}
+		if (!suitable) continue;
+		report_comment("using GPU: %s\n", device_properties.deviceName);
+		vulkan.physical_device             = device;
+		vulkan.swapchain_images_capacity   = surface_images_count + 1;
+		vulkan.swapchain_image_extent      = surface_extent;
+		vulkan.swapchain_image_format      = surface_format;
+		vulkan.swapchain_presentation_mode = surface_presentation_mode;
+		break;
+	}
+	assert(vulkan.physical_device);
 }
 
 void render_frame(void)
 {
+
 }
 
 int main(void)
 {
 	initialize();
+
+	vulkan_get_physical_device();
 
 	/* compile shaders */
 #if 0
@@ -172,7 +348,7 @@ int main(void)
 		{
 			if (second_elapsed_time >= 1.f)
 			{
-				printf("FPS: %u\n", second_frames_count);
+				report_verbose("FPS: %u\n", second_frames_count);
 				second_frames_count = 0;
 				second_elapsed_time = 0;
 			}
@@ -187,4 +363,26 @@ int main(void)
 	}
 
 	return 0;
+}
+
+static VKAPI_ATTR VkBool32 VKAPI_CALL process_vulkan_message(
+	VkDebugUtilsMessageSeverityFlagBitsEXT      message_severity,
+	VkDebugUtilsMessageTypeFlagsEXT             message_types,
+	const VkDebugUtilsMessengerCallbackDataEXT *callback_data,
+	void*                                       user_data)
+{
+	if (message_severity < VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) return VK_FALSE;
+
+	const char *severity;
+	switch (message_severity)
+	{
+	case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT: severity = "VERBOSE"; break;
+	case VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT:    severity = "COMMENT"; break;
+	case VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT: severity = "CAUTION"; break;
+	case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT:   severity = "FAILURE"; break;
+	default: unreachable();
+	}
+
+	fprintf(stderr, "[%s] %s\n", severity, callback_data->pMessage);
+	return VK_FALSE;
 }

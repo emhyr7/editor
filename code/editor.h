@@ -30,14 +30,17 @@
 #include <stdio.h>
 #include <threads.h>
 #include <wchar.h>
+#include <limits.h>
 
 #define __FUNCTION__ __func__
 
 #define unreachable() __builtin_unreachable()
 
+#define generic(...) _Generic(__VA_ARGS__)
+
 #define countof(x) (sizeof(x) / sizeof(x[0]))
 
-#define APPLICATION_NAME "SYNXX-7_EDITOR"
+#define APPLICATION_NAME "SYNXX-7:EDITOR"
 
 typedef uint8_t  uint8;
 typedef uint16_t uint16;
@@ -53,6 +56,8 @@ typedef uint8  uintb;
 typedef uint16 uints;
 typedef uint32 uint;
 typedef uint64 uintl;
+
+#define UINT_MAXIMUM UINT_MAX
 
 typedef sint8  sintb;
 typedef sint16 sints;
@@ -74,6 +79,25 @@ typedef uint8  bit8;
 typedef uint16 bit16;
 typedef uint32 bit32;
 typedef uint64 bit64;
+
+typedef enum
+{
+	/* they all have equal width ! how neat ! */
+	SEVERITY_VERBOSE,
+	SEVERITY_COMMENT,
+	SEVERITY_CAUTION,
+	SEVERITY_FAILURE,
+} severity;
+
+void _report(const char *file, uint line, severity severity, const char *message, ...);
+
+#define report(...) _report(__FILE__, __LINE__, __VA_ARGS__)
+#define report_verbose(...) report(SEVERITY_VERBOSE, __VA_ARGS__)
+#define report_comment(...) report(SEVERITY_COMMENT, __VA_ARGS__)
+#define report_caution(...) report(SEVERITY_CAUTION, __VA_ARGS__)
+#define report_failure(...) report(SEVERITY_FAILURE, __VA_ARGS__)
+
+#define clamp(value, minimum, maximum) (value < minimum ? minimum : value > maximum ? maximum : value)
 
 #define FONT_GLYPHS_CAPACITY 128
 #define FONT_DEFAULT_HEIGHT  16
@@ -117,6 +141,8 @@ void move(void *destination, const void *memory, uint size);
 void fill(void *memory, uint size, uintb value);
 void zero(void *memory, uint size);
 
+int compare_string(const char *left, const char *right);
+
 #define TIME_SECONDS_FACTOR 1e9
 
 uintl get_time(void);
@@ -132,6 +158,35 @@ uintl get_size_of_file(handle handle);
 uint read_from_file(void *buffer, uint size, handle handle);
 void close_file(handle handle);
 
+typedef struct
+{
+	uint left;
+	uint top;
+	uint right;
+	uint base;
+} rect;
+
+void get_window_rect(rect *rect);
+
+extern struct vulkan
+{
+	VkInstance instance;
+	VkDebugUtilsMessengerEXT debug_messenger;
+	VkSurfaceKHR surface;
+	VkPhysicalDevice physical_device;
+
+	uint               swapchain_images_capacity;
+	VkExtent2D         swapchain_image_extent;
+	VkSurfaceFormatKHR swapchain_image_format;
+	VkPresentModeKHR   swapchain_presentation_mode;
+} vulkan;
+
+void _assert_vulkan_result(VkResult result, const char *file, uint line);
+
+#define assert_vulkan_result(result) _assert_vulkan_result(result, __FILE__, __LINE__)
+
+void vulkan_get_physical_device(void);
+
 extern struct global
 {
 	bit terminability : 1;
@@ -141,12 +196,3 @@ extern thread_local struct context
 {
 	uintl clock_time;
 } context;
-
-extern struct vulkan
-{
-	VkInstance instance;
-} vulkan;
-
-void _verify_vulkan_result(VkResult result, const char *file, uint line);
-
-#define verify_vulkan_result(result) _verify_vulkan_result(result, __FILE__, __LINE__)

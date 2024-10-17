@@ -93,6 +93,11 @@ inline void close_file(handle handle)
 	CloseHandle(handle);
 }
 
+inline void get_window_rect(rect *rect)
+{
+	GetClientRect(win32.window, (RECT *)rect);
+}
+
 static void initialize(void)
 {
 	{
@@ -200,28 +205,6 @@ LRESULT CALLBACK win32_process_window_message(HWND window, UINT message, WPARAM 
 	return result;
 }
 
-static VKAPI_ATTR VkBool32 VKAPI_CALL process_vulkan_message(
-	VkDebugUtilsMessageSeverityFlagBitsEXT      message_severity,
-	VkDebugUtilsMessageTypeFlagsEXT             message_types,
-	const VkDebugUtilsMessengerCallbackDataEXT *callback_data,
-	void*                                       user_data)
-{
-	if (message_severity < VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) return VK_FALSE;
-
-	const char *severity;
-	switch (message_severity)
-	{
-	case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT: severity = "VERBOSE"; break;
-	case VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT:    severity = "COMMENT"; break;
-	case VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT: severity = "CAUTION"; break;
-	case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT:   severity = "FAILURE"; break;
-	default: unreachable();
-	}
-
-	fprintf(stderr, "%s: %s\n", severity, callback_data->pMessage);
-	return VK_FALSE;
-}
-
 void win32_initialize_vulkan(void)
 {
 	const char *enabled_layer_names[] =
@@ -242,7 +225,7 @@ void win32_initialize_vulkan(void)
 	};
 	uint enabled_extensions_count = countof(enabled_extension_names);
 
-	/* create instance */
+	/* create the instance */
 	{
 		VkApplicationInfo application_info =
 		{
@@ -277,7 +260,25 @@ void win32_initialize_vulkan(void)
 		};
 		instance_creation_info.pNext = &debug_messenger_creation_info;
 #endif
-		VkResult result = vkCreateInstance(&instance_creation_info, 0, &vulkan.instance);
-		verify_vulkan_result(result);
+		assert_vulkan_result(vkCreateInstance(&instance_creation_info, 0, &vulkan.instance));
+
+#if defined(DEBUGGING)
+		PFN_vkCreateDebugUtilsMessengerEXT vkCreateDebugUtilsMessengerEXT = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(vulkan.instance, "vkCreateDebugUtilsMessengerEXT");
+		assert(vkCreateDebugUtilsMessengerEXT);
+		assert_vulkan_result(vkCreateDebugUtilsMessengerEXT(vulkan.instance, &debug_messenger_creation_info, 0, &vulkan.debug_messenger));
+#endif
+	}
+
+	/* create the surface */
+	{
+		VkWin32SurfaceCreateInfoKHR surface_creation_info =
+		{
+			.sType     = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
+			.pNext     = 0,
+			.flags     = 0,
+			.hinstance = win32.instance,
+			.hwnd      = win32.window,
+		};
+		assert_vulkan_result(vkCreateWin32SurfaceKHR(vulkan.instance, &surface_creation_info, 0, &vulkan.surface));
 	}
 }
