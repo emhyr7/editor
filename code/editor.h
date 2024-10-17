@@ -1,10 +1,23 @@
 #pragma once
 
+#if !defined(NDEBUG)
+	#define DEBUGGING
+#endif
+
 #if defined(_WIN32)
-	#include "editor_win32.h"
+	#define ON_WIN32
 #elif defined(__linux__)
+	#define ON_LINUX
+#endif
+
+#if defined(ON_WIN32)
+	#include "editor_win32.h"
+#elif defined(ON_LINUX)
 	#include "editor_linux.h"
 #endif
+
+#include <vulkan/vulkan.h>
+#include <vulkan/vk_enum_string_helper.h>
 
 #include "cglm/cglm.h"
 
@@ -12,21 +25,19 @@
 #define STBTT_STATIC
 #include "stb/stb_truetype.h"
 
-#define time c_time
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <threads.h>
 #include <wchar.h>
-#undef time
 
 #define __FUNCTION__ __func__
 
+#define unreachable() __builtin_unreachable()
+
 #define countof(x) (sizeof(x) / sizeof(x[0]))
 
-#define PROGRAM_TITLE L"EDITOR"
-
-#define WM_GMH_EXISTS (WM_USER + 1)
+#define APPLICATION_NAME "SYNXX-7_EDITOR"
 
 typedef uint8_t  uint8;
 typedef uint16_t uint16;
@@ -106,14 +117,12 @@ void move(void *destination, const void *memory, uint size);
 void fill(void *memory, uint size, uintb value);
 void zero(void *memory, uint size);
 
-typedef uintl time; /* in nanoseconds */
-
 #define TIME_SECONDS_FACTOR 1e9
 
-time get_time(void);
+uintl get_time(void);
 
-time begin_clock(void);
-time end_clock(void);
+uintl begin_clock(void);
+uintl end_clock(void);
 
 void *allocate(uint size);
 void deallocate(void *memory, uint size);
@@ -132,3 +141,12 @@ extern thread_local struct context
 {
 	uintl clock_time;
 } context;
+
+extern struct vulkan
+{
+	VkInstance instance;
+} vulkan;
+
+void _verify_vulkan_result(VkResult result, const char *file, uint line);
+
+#define verify_vulkan_result(result) _verify_vulkan_result(result, __FILE__, __LINE__)

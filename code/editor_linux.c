@@ -1,8 +1,8 @@
-struct platform
+struct linux
 {
-} platform;
+} linux;
 
-inline time get_time(void)
+inline uintl get_time(void)
 {
 	struct timespec ts;
 	assert(clock_gettime(CLOCK_REALTIME, &ts) != -1);

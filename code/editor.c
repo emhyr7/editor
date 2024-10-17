@@ -1,14 +1,5 @@
 #include "editor.h"
 
-static void initialize(void);
-static void process_messages(void);
-
-#if defined(_WIN32)
-	#include "editor_win32.c"
-#elif defined(__linux__)
-	#include "editor_linux.c"
-#endif
-
 struct global global =
 {
 };
@@ -16,6 +7,20 @@ struct global global =
 thread_local struct context context =
 {
 };
+
+struct vulkan vulkan =
+{
+
+};
+
+static void initialize(void);
+static void process_messages(void);
+
+#if defined(ON_WIN32)
+	#include "editor_win32.c"
+#elif defined(ON_LINUX)
+	#include "editor_linux.c"
+#endif
 
 static void render_frame(void);
 
@@ -92,15 +97,23 @@ inline void zero(void *memory, uint size)
 	fill(memory, size, 0);
 }
 
-inline time begin_clock(void)
+inline uintl begin_clock(void)
 {
 	return context.clock_time = get_time();
 }
 
-inline time end_clock(void)
+inline uintl end_clock(void)
 {
-	time elapsed_time = get_time() - context.clock_time;
+	uintl elapsed_time = get_time() - context.clock_time;
 	return elapsed_time;
+}
+
+void _verify_vulkan_result(VkResult result, const char *file, uint line)
+{
+	if (result == VK_SUCCESS) return;
+
+	fprintf(stderr, "FAILURE: `VkResult` is \"%s\" at %s:%u\n", string_VkResult(result), file, line);
+	assert(result == VK_SUCCESS);
 }
 
 void render_frame(void)
@@ -149,8 +162,8 @@ int main(void)
 
 	load_font(default_font_file_path, 0, &default_font);
 
-	time    frame_beginning_time = get_time();
-	time    frame_ending_time;
+	uintl   frame_beginning_time = get_time();
+	uintl   frame_ending_time;
 	float32 frame_elapsed_time;
 	uint    second_frames_count = 0;
 	float32 second_elapsed_time = 0;

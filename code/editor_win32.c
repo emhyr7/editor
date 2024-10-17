@@ -1,6 +1,10 @@
+#define WM_USER_ALREADYEXISTS (WM_USER + 1)
+
 static LRESULT CALLBACK win32_process_window_message(HWND window, UINT message, WPARAM wparam, LPARAM lparam);
 
-struct platform
+static void win32_initialize_vulkan(void);
+
+struct win32
 {
 	HINSTANCE instance;
 	STARTUPINFOW startup_info;
@@ -9,13 +13,13 @@ struct platform
 
 	HWND window;
 	MSG  window_message;
-} platform;
+} win32;
 
-inline time get_time(void)
+inline uintl get_time(void)
 {
 	LARGE_INTEGER counter;
 	QueryPerformanceCounter(&counter);
-	return counter.QuadPart / platform.performance_frequency * 1e9;
+	return counter.QuadPart / win32.performance_frequency * 1e9;
 }
 
 inline void *allocate(uint size)
@@ -89,13 +93,77 @@ inline void close_file(handle handle)
 	CloseHandle(handle);
 }
 
+static void initialize(void)
+{
+	{
+		LARGE_INTEGER frequency;
+		QueryPerformanceFrequency(&frequency);
+		win32.performance_frequency = frequency.QuadPart;
+	}
+
+	win32.instance = GetModuleHandle(0);
+	GetStartupInfoW(&win32.startup_info);
+
+	/* create the window */
+	{
+		WNDCLASSEXW window_class =
+		{
+			.cbSize        = sizeof(window_class),
+			.style         = CS_OWNDC,
+			.lpfnWndProc   = win32_process_window_message,
+			.hInstance     = win32.instance,
+			.lpszClassName = TEXT(APPLICATION_NAME"_window_class"),
+		};
+
+		{
+			HWND existing = FindWindowW(window_class.lpszClassName, 0);
+			if (existing)
+			{
+				/* TODO: notify the user that the main window already exists, and that the
+				   current process will terminate. */
+				PostMessageW(existing, WM_USER_ALREADYEXISTS, 0, 0);
+				ExitProcess(0);
+			}
+		}
+
+		assert(RegisterClassExW(&window_class));
+
+		win32.window = CreateWindowExW(
+			WS_EX_OVERLAPPEDWINDOW,
+			window_class.lpszClassName,
+			TEXT(APPLICATION_NAME),
+			WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+			CW_USEDEFAULT,
+			CW_USEDEFAULT,
+			CW_USEDEFAULT,
+			CW_USEDEFAULT,
+			0,
+			0,
+			window_class.hInstance,
+			0);
+		assert(win32.window);
+		ShowWindow(win32.window, SW_NORMAL);
+	}
+
+	win32_initialize_vulkan();
+}
+
+static void process_messages(void)
+{
+	while (PeekMessage(&win32.window_message, 0, 0, 0, PM_REMOVE))
+	{
+		TranslateMessage(&win32.window_message);
+		DispatchMessage(&win32.window_message);
+	}
+}
+
 LRESULT CALLBACK win32_process_window_message(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
 	LRESULT result = 0;
 
 	switch (message)
 	{
-	case WM_GMH_EXISTS:
+	case WM_USER_ALREADYEXISTS:
 		return 0;
 
 	case WM_CREATE:
@@ -132,64 +200,84 @@ LRESULT CALLBACK win32_process_window_message(HWND window, UINT message, WPARAM 
 	return result;
 }
 
-static void initialize(void)
+static VKAPI_ATTR VkBool32 VKAPI_CALL process_vulkan_message(
+	VkDebugUtilsMessageSeverityFlagBitsEXT      message_severity,
+	VkDebugUtilsMessageTypeFlagsEXT             message_types,
+	const VkDebugUtilsMessengerCallbackDataEXT *callback_data,
+	void*                                       user_data)
 {
+	if (message_severity < VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) return VK_FALSE;
+
+	const char *severity;
+	switch (message_severity)
 	{
-		LARGE_INTEGER frequency;
-		QueryPerformanceFrequency(&frequency);
-		platform.performance_frequency = frequency.QuadPart;
+	case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT: severity = "VERBOSE"; break;
+	case VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT:    severity = "COMMENT"; break;
+	case VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT: severity = "CAUTION"; break;
+	case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT:   severity = "FAILURE"; break;
+	default: unreachable();
 	}
 
-	platform.instance = GetModuleHandle(0);
-	GetStartupInfoW(&platform.startup_info);
-
-	/* create the window */
-	{
-		WNDCLASSEXW window_class =
-		{
-			.cbSize        = sizeof(window_class),
-			.style         = CS_OWNDC,
-			.lpfnWndProc   = win32_process_window_message,
-			.hInstance     = platform.instance,
-			.lpszClassName = PROGRAM_TITLE"_window_class",
-		};
-
-		{
-			HWND existing = FindWindowW(window_class.lpszClassName, 0);
-			if (existing)
-			{
-				/* TODO: notify the user that the main window already exists, and that the
-				   current process will terminate. */
-				PostMessageW(existing, WM_GMH_EXISTS, 0, 0);
-				ExitProcess(0);
-			}
-		}
-
-		assert(RegisterClassExW(&window_class));
-
-		platform.window = CreateWindowExW(
-			WS_EX_OVERLAPPEDWINDOW,
-			window_class.lpszClassName,
-			PROGRAM_TITLE,
-			WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
-			CW_USEDEFAULT,
-			CW_USEDEFAULT,
-			CW_USEDEFAULT,
-			CW_USEDEFAULT,
-			0,
-			0,
-			window_class.hInstance,
-			0);
-		assert(platform.window);
-		ShowWindow(platform.window, SW_NORMAL);
-	}
+	fprintf(stderr, "%s: %s\n", severity, callback_data->pMessage);
+	return VK_FALSE;
 }
 
-static void process_messages(void)
+void win32_initialize_vulkan(void)
 {
-	while (PeekMessage(&platform.window_message, 0, 0, 0, PM_REMOVE))
+	const char *enabled_layer_names[] =
 	{
-		TranslateMessage(&platform.window_message);
-		DispatchMessage(&platform.window_message);
+#if defined(DEBUGGING)
+		"VK_LAYER_KHRONOS_validation",
+#endif
+	};
+	uint enabled_layers_count = countof(enabled_layer_names);
+
+	const char *enabled_extension_names[] =
+	{
+#if defined(DEBUGGING)
+		VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
+#endif
+		VK_KHR_SURFACE_EXTENSION_NAME,
+		VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
+	};
+	uint enabled_extensions_count = countof(enabled_extension_names);
+
+	/* create instance */
+	{
+		VkApplicationInfo application_info =
+		{
+			.sType              = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+			.pNext              = 0,
+			.pApplicationName   = APPLICATION_NAME,
+			.applicationVersion = VK_MAKE_VERSION(1, 0, 0),
+			.apiVersion         = VK_API_VERSION_1_3,
+		};
+		VkInstanceCreateInfo instance_creation_info =
+		{
+			.sType                  = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+			.pNext                  = 0,
+			.flags                  = 0,
+			.pApplicationInfo       = &application_info,
+			.enabledLayerCount      = enabled_layers_count,
+			.ppEnabledLayerNames     = enabled_layer_names,
+			.enabledExtensionCount  = enabled_extensions_count,
+			.ppEnabledExtensionNames = enabled_extension_names,
+		};
+
+#if defined(DEBUGGING)
+		VkDebugUtilsMessengerCreateInfoEXT debug_messenger_creation_info =
+		{
+			.sType           = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+	        .pNext           = 0,
+	        .flags           = 0,
+	        .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+	        .messageType     = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_DEVICE_ADDRESS_BINDING_BIT_EXT,
+	        .pfnUserCallback = process_vulkan_message,
+	        .pUserData       = 0,
+		};
+		instance_creation_info.pNext = &debug_messenger_creation_info;
+#endif
+		VkResult result = vkCreateInstance(&instance_creation_info, 0, &vulkan.instance);
+		verify_vulkan_result(result);
 	}
 }
