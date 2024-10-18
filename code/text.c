@@ -1,4 +1,4 @@
-#include "editor.h"
+#include "text.h"
 
 struct vulkan vulkan =
 {
@@ -122,9 +122,9 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL process_vulkan_message(
 	void*                                       user_data);
 
 #if defined(ON_WIN32)
-	#include "editor_win32.c"
+	#include "text_win32.c"
 #elif defined(ON_LINUX)
-	#include "editor_linux.c"
+	#include "text_linux.c"
 #endif
 
 static void initialize_vulkan(void);

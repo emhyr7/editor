@@ -11,9 +11,9 @@
 #endif
 
 #if defined(ON_WIN32)
-	#include "editor_win32.h"
+	#include "text_win32.h"
 #elif defined(ON_LINUX)
-	#include "editor_linux.h"
+	#include "text_linux.h"
 #endif
 
 #include <vulkan/vulkan.h>
