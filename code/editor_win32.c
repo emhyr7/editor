@@ -217,13 +217,13 @@ void win32_initialize_vulkan(void)
 
 	const char *enabled_extension_names[] =
 	{
-#if defined(DEBUGGING)
+	#if defined(DEBUGGING)
 		VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
-#endif
-		VK_KHR_SURFACE_EXTENSION_NAME,
+	#endif
 		VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
+		VK_KHR_SURFACE_EXTENSION_NAME,
 	};
-	uint enabled_extensions_count = countof(enabled_extension_names);
+	const uint enabled_extensions_count = countof(enabled_extension_names);
 
 	/* create the instance */
 	{
@@ -237,13 +237,13 @@ void win32_initialize_vulkan(void)
 		};
 		VkInstanceCreateInfo instance_creation_info =
 		{
-			.sType                  = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-			.pNext                  = 0,
-			.flags                  = 0,
-			.pApplicationInfo       = &application_info,
-			.enabledLayerCount      = enabled_layers_count,
+			.sType                   = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+			.pNext                   = 0,
+			.flags                   = 0,
+			.pApplicationInfo        = &application_info,
+			.enabledLayerCount       = enabled_layers_count,
 			.ppEnabledLayerNames     = enabled_layer_names,
-			.enabledExtensionCount  = enabled_extensions_count,
+			.enabledExtensionCount   = enabled_extensions_count,
 			.ppEnabledExtensionNames = enabled_extension_names,
 		};
 

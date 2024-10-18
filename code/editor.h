@@ -168,12 +168,42 @@ typedef struct
 
 void get_window_rect(rect *rect);
 
+typedef enum
+{
+	VULKAN_QUEUE_INDEX_GRAPHICS,
+	VULKAN_QUEUE_INDEX_PRESENTATION,
+	VULKAN_QUEUES_COUNT,
+} vulkan_queue_index;
+
 extern struct vulkan
 {
 	VkInstance instance;
 	VkDebugUtilsMessengerEXT debug_messenger;
+
 	VkSurfaceKHR surface;
+
 	VkPhysicalDevice physical_device;
+	VkDevice         device;
+
+	union
+	{
+		uint queue_families[VULKAN_QUEUES_COUNT];
+		struct
+		{
+			uint graphics_queue_family;
+			uint presentation_queue_family;
+		};
+	};
+
+	union
+	{
+		VkQueue queues[VULKAN_QUEUES_COUNT];
+		struct
+		{
+			VkQueue graphics_queue;
+			VkQueue presentation_queue;
+		};
+	};
 
 	uint               swapchain_images_capacity;
 	VkExtent2D         swapchain_image_extent;

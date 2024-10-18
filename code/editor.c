@@ -127,79 +127,8 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL process_vulkan_message(
 	#include "editor_linux.c"
 #endif
 
-static void vulkan_get_physical_device(void);
-
-static void render_frame(void)
-{
-
-}
-
-int main(void)
-{
-	initialize();
-
-	/* compile shaders */
-#if 0
-	{
-		printf("loading shaders...\n");
-
-		shader shaders[] =
-		{
-			{ 0, "code/shader.vert" },
-			{ 1, "code/shader.frag" },
-		};
-
-		const uint shaders_count = countof(shaders);
-
-		uint shaders_data_size = 0;
-		for (uint i = 0; i < shaders_count; ++i)
-		{
-			shader *shader = shaders + i;
-			shader->handle = open_file(shader->path);
-			shader->size = 1 + get_size_of_file(shader->handle);
-			shaders_data_size += shader->size;
-		}
-
-		char *shaders_data = allocate(shaders_data_size);
-		char *shader_data = shaders_data;
-		for (uint i = 0; i < shaders_count; ++i)
-		{
-			shader *shader = shaders + i;
-			shader->data = shader_data;
-			shader_data += shader->size;
-			read_from_file(shader->data, shader->size, shader->handle);
-			shader->data[shader->size - 1] = 0;
-			close_file(shader->handle);
-		}
-	}
-#endif
-
-	uintl   frame_beginning_time = get_time();
-	uintl   frame_ending_time;
-	float32 frame_elapsed_time;
-	uint    second_frames_count = 0;
-	float32 second_elapsed_time = 0;
-	while (!global.terminability)
-	{
-		{
-			if (second_elapsed_time >= 1.f)
-			{
-				report_verbose("FPS: %u\n", second_frames_count);
-				second_frames_count = 0;
-				second_elapsed_time = 0;
-			}
-			frame_ending_time = get_time();
-			frame_elapsed_time = (float32)(frame_ending_time - frame_beginning_time) / TIME_SECONDS_FACTOR;
-			second_elapsed_time += frame_elapsed_time;
-			second_frames_count += 1;
-			frame_beginning_time = frame_ending_time;
-		}
-
-		process_messages();
-	}
-
-	return 0;
-}
+static void get_vulkan_physical_device(void);
+static void create_vulkan_device(void);
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL process_vulkan_message(
 	VkDebugUtilsMessageSeverityFlagBitsEXT      message_severity,
@@ -223,7 +152,13 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL process_vulkan_message(
 	return VK_FALSE;
 }
 
-static void vulkan_get_physical_device(void)
+static const char *vulkan_physical_device_extension_names[] =
+{
+	VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+};
+static uint vulkan_physical_device_extensions_count = countof(vulkan_physical_device_extension_names);
+
+void get_vulkan_physical_device(void)
 {
 	uint devices_count;
 	vkEnumeratePhysicalDevices(vulkan.instance, &devices_count, 0);
@@ -241,29 +176,21 @@ static void vulkan_get_physical_device(void)
 		vkGetPhysicalDeviceFeatures(device, &device_features);
 
 		/* check properties and features */
-		bit suitable =
-			device_properties.deviceType = VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU
-			&& device_features.geometryShader;
+		bit suitable = device_properties.deviceType = VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && device_features.geometryShader;
 		if (!suitable) continue;
 
 		/* check extensions */
 		{
-			const char *needed_extension_names[] =
-			{
-				VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-			};
-			uint needed_extensions_count = countof(needed_extension_names);
-
 			uint extensions_count;
 			vkEnumerateDeviceExtensionProperties(device, 0, &extensions_count, 0);
 			VkExtensionProperties extension_properties[extensions_count];
 			vkEnumerateDeviceExtensionProperties(device, 0, &extensions_count, extension_properties);
-			for (uint i = 0; i < needed_extensions_count; ++i)
+			for (uint i = 0; i < vulkan_physical_device_extensions_count; ++i)
 			{
 				bit good = 0;
 				for (uint j = 0; j < extensions_count; ++j)
 				{
-					if (!compare_string(extension_properties[j].extensionName, needed_extension_names[i]))
+					if (!compare_string(extension_properties[j].extensionName, vulkan_physical_device_extension_names[i]))
 					{
 						good = 1;
 						break;
@@ -278,8 +205,8 @@ static void vulkan_get_physical_device(void)
 		}
 		if (!suitable) continue;
 
-		uint graphics_family_index = -1;
-		uint presentation_family_index = -1;
+		uint graphics_queue_family = -1;
+		uint presentation_queue_family = -1;
 
 		/* check queue families */
 		{
@@ -290,16 +217,16 @@ static void vulkan_get_physical_device(void)
 			for (uint i = 0; i < families_count; ++i)
 			{
 				VkQueueFamilyProperties *properties = &family_properties[i];
-				if ((graphics_family_index == -1) && (properties->queueFlags & VK_QUEUE_GRAPHICS_BIT)) graphics_family_index = i;
-				if (presentation_family_index == -1)
+				if ((graphics_queue_family == -1) && (properties->queueFlags & VK_QUEUE_GRAPHICS_BIT)) graphics_queue_family = i;
+				if (presentation_queue_family == -1)
 				{
 					VkBool32 presentation_supported;
 					vkGetPhysicalDeviceSurfaceSupportKHR(device, i, vulkan.surface, &presentation_supported);
-					if (presentation_supported) presentation_family_index = i;
+					if (presentation_supported) presentation_queue_family = i;
 				}
 			}
 
-			bit all_families_found = graphics_family_index != -1 && presentation_family_index != -1;
+			bit all_families_found = graphics_queue_family != -1 && presentation_queue_family != -1;
 			if (!all_families_found) suitable = 0;
 		}
 		if (!suitable) continue;
@@ -372,6 +299,8 @@ static void vulkan_get_physical_device(void)
 		if (!suitable) continue;
 		report_comment("using GPU: %s\n", device_properties.deviceName);
 		vulkan.physical_device             = device;
+		vulkan.graphics_queue_family       = graphics_queue_family;
+		vulkan.presentation_queue_family   = presentation_queue_family;
 		vulkan.swapchain_images_capacity   = surface_images_count + 1;
 		vulkan.swapchain_image_extent      = surface_extent;
 		vulkan.swapchain_image_format      = surface_format;
@@ -379,4 +308,127 @@ static void vulkan_get_physical_device(void)
 		break;
 	}
 	assert(vulkan.physical_device);
+}
+
+void create_vulkan_device(void)
+{
+	float32 priority = 1.f;
+	uint queue_creation_infos_count = 0;
+	VkDeviceQueueCreateInfo queue_creation_infos[VULKAN_QUEUES_COUNT];
+	for (uint i = 0; i < VULKAN_QUEUES_COUNT; ++i)
+	{
+		uint queue_family = vulkan.queue_families[i];
+		bit unique = 1;
+		for (uint j = 0; j < queue_creation_infos_count; ++j)
+		{
+			if (queue_family == queue_creation_infos[j].queueFamilyIndex)
+			{
+				unique = 0;
+				break;
+			}
+		}
+		if (unique)
+		{
+			queue_creation_infos[queue_creation_infos_count++] = (VkDeviceQueueCreateInfo)
+			{
+				.sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+				.pNext            = 0,
+				.flags            = 0,
+				.queueFamilyIndex = queue_family,
+				.queueCount       = 1,
+				.pQueuePriorities = &priority,
+			};
+		}
+	}
+
+	VkPhysicalDeviceFeatures physical_device_features = {};
+	VkDeviceCreateInfo device_creation_info =
+	{
+		.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+		.pNext                   = 0,
+		.flags                   = 0,
+		.queueCreateInfoCount    = queue_creation_infos_count,
+		.pQueueCreateInfos       = queue_creation_infos,
+		.enabledLayerCount       = 0,
+		.ppEnabledLayerNames     = 0,
+		.enabledExtensionCount   = vulkan_physical_device_extensions_count,
+		.ppEnabledExtensionNames = vulkan_physical_device_extension_names,
+		.pEnabledFeatures        = &physical_device_features,
+	};
+	assert_vulkan_result(vkCreateDevice(vulkan.physical_device, &device_creation_info, 0, &vulkan.device));
+
+	for (uint i = 0; i < VULKAN_QUEUES_COUNT; ++i)
+	{
+		vkGetDeviceQueue(vulkan.device, vulkan.queue_families[i], 0, &vulkan.queues[i]);
+	}
+}
+
+int main(void)
+{
+	initialize();
+
+	get_vulkan_physical_device();
+	create_vulkan_device();
+
+	/* compile shaders */
+#if 0
+	{
+		printf("loading shaders...\n");
+
+		shader shaders[] =
+		{
+			{ 0, "code/shader.vert" },
+			{ 1, "code/shader.frag" },
+		};
+
+		const uint shaders_count = countof(shaders);
+
+		uint shaders_data_size = 0;
+		for (uint i = 0; i < shaders_count; ++i)
+		{
+			shader *shader = shaders + i;
+			shader->handle = open_file(shader->path);
+			shader->size = 1 + get_size_of_file(shader->handle);
+			shaders_data_size += shader->size;
+		}
+
+		char *shaders_data = allocate(shaders_data_size);
+		char *shader_data = shaders_data;
+		for (uint i = 0; i < shaders_count; ++i)
+		{
+			shader *shader = shaders + i;
+			shader->data = shader_data;
+			shader_data += shader->size;
+			read_from_file(shader->data, shader->size, shader->handle);
+			shader->data[shader->size - 1] = 0;
+			close_file(shader->handle);
+		}
+	}
+#endif
+
+	uintl   frame_beginning_time = get_time();
+	uintl   frame_ending_time;
+	float32 frame_elapsed_time;
+	uint    second_frames_count = 0;
+	float32 second_elapsed_time = 0;
+	while (!global.terminability)
+	{
+		{
+			if (second_elapsed_time >= 1.f)
+			{
+				report_verbose("FPS: %u\n", second_frames_count);
+				second_frames_count = 0;
+				second_elapsed_time = 0;
+			}
+			frame_ending_time = get_time();
+			frame_elapsed_time = (float32)(frame_ending_time - frame_beginning_time) / TIME_SECONDS_FACTOR;
+			second_elapsed_time += frame_elapsed_time;
+			second_frames_count += 1;
+			frame_beginning_time = frame_ending_time;
+		}
+
+		process_messages();
+	}
+
+	return 0;
 }
