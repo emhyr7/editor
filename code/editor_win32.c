@@ -93,7 +93,7 @@ inline void close_file(handle handle)
 	CloseHandle(handle);
 }
 
-inline void get_window_rect(rect *rect)
+inline void get_window_frame_rect(rect *rect)
 {
 	GetClientRect(win32.window, (RECT *)rect);
 }
@@ -153,7 +153,7 @@ static void initialize(void)
 	win32_initialize_vulkan();
 }
 
-static void process_messages(void)
+static void get_window_messages(void)
 {
 	while (PeekMessage(&win32.window_message, 0, 0, 0, PM_REMOVE))
 	{

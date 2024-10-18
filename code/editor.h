@@ -40,7 +40,7 @@
 
 #define countof(x) (sizeof(x) / sizeof(x[0]))
 
-#define APPLICATION_NAME "SYNXX-7:EDITOR"
+#define APPLICATION_NAME "SYNXX-7:TEXT"
 
 typedef uint8_t  uint8;
 typedef uint16_t uint16;
@@ -166,7 +166,7 @@ typedef struct
 	uint base;
 } rect;
 
-void get_window_rect(rect *rect);
+void get_window_frame_rect(rect *rect);
 
 typedef enum
 {
@@ -205,6 +205,7 @@ extern struct vulkan
 		};
 	};
 
+	VkSwapchainKHR     swapchain;
 	uint               swapchain_images_capacity;
 	VkExtent2D         swapchain_image_extent;
 	VkSurfaceFormatKHR swapchain_image_format;

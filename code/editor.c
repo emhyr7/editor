@@ -113,7 +113,7 @@ void _assert_vulkan_result(VkResult result, const char *file, uint line)
 }
 
 static void initialize(void);
-static void process_messages(void);
+static void get_window_messages(void);
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL process_vulkan_message(
 	VkDebugUtilsMessageSeverityFlagBitsEXT      message_severity,
@@ -128,6 +128,10 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL process_vulkan_message(
 #endif
 
 static void initialize_vulkan(void);
+static void terminate_vulkan(void);
+static void create_vulkan_swapchain(void);
+static void destroy_vulkan_swapchain(void);
+static void recreate_vulkan_swapchain(void);
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL process_vulkan_message(
 	VkDebugUtilsMessageSeverityFlagBitsEXT      message_severity,
@@ -243,7 +247,7 @@ void initialize_vulkan(void)
 				if (capabilities.currentExtent.width == UINT_MAXIMUM)
 				{
 					rect rect;
-					get_window_rect(&rect);
+					get_window_frame_rect(&rect);
 					surface_extent.width = clamp(rect.right - rect.left, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
 					surface_extent.height = clamp(rect.base - rect.top, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
 				}
@@ -365,6 +369,42 @@ void initialize_vulkan(void)
 	}
 }
 
+void terminate_vulkan(void)
+{
+
+}
+
+void create_swapchain(void)
+{
+
+}
+
+void destroy_swapchain(void)
+{
+	/* destroy framebuffers */
+
+	/* destroy image views */
+
+	vkDestroySwapchainKHR(vulkan.device, vulkan.swapchain, 0);
+}
+
+void recreate_swapchain(void)
+{
+	/* the window might be minimized, resulting in a frame size of 0, so wait
+	   until the window is unminimized */
+	for (;;)
+	{
+		rect frame_rect;
+		get_window_frame_rect(&frame_rect);
+		if (frame_rect.right || frame_rect.base) break;
+		get_window_messages();
+	}
+	vkDeviceWaitIdle(vulkan.device);
+
+	destroy_swapchain();
+	create_swapchain();
+}
+
 int main(void)
 {
 	initialize();
@@ -413,6 +453,8 @@ int main(void)
 	float32 second_elapsed_time = 0;
 	while (!global.terminability)
 	{
+		get_window_messages();
+
 		{
 			if (second_elapsed_time >= 1.f)
 			{
@@ -426,8 +468,6 @@ int main(void)
 			second_frames_count += 1;
 			frame_beginning_time = frame_ending_time;
 		}
-
-		process_messages();
 	}
 
 	return 0;
