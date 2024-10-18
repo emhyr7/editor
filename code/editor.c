@@ -127,8 +127,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL process_vulkan_message(
 	#include "editor_linux.c"
 #endif
 
-static void get_vulkan_physical_device(void);
-static void create_vulkan_device(void);
+static void initialize_vulkan(void);
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL process_vulkan_message(
 	VkDebugUtilsMessageSeverityFlagBitsEXT      message_severity,
@@ -152,223 +151,224 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL process_vulkan_message(
 	return VK_FALSE;
 }
 
-static const char *vulkan_physical_device_extension_names[] =
+void initialize_vulkan(void)
 {
-	VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-};
-static uint vulkan_physical_device_extensions_count = countof(vulkan_physical_device_extension_names);
-
-void get_vulkan_physical_device(void)
-{
-	uint devices_count;
-	vkEnumeratePhysicalDevices(vulkan.instance, &devices_count, 0);
-	VkPhysicalDevice devices[devices_count];
-	vkEnumeratePhysicalDevices(vulkan.instance, &devices_count, devices);
-
-	/* determine if the device is suitable */
-	for (uint i = 0; i < devices_count; ++i)
+	static const char *physical_device_extension_names[] =
 	{
-		VkPhysicalDevice device = devices[i];
+		VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+	};
+	static uint physical_device_extensions_count = countof(physical_device_extension_names);
 
-		VkPhysicalDeviceProperties device_properties;
-		VkPhysicalDeviceFeatures device_features;
-		vkGetPhysicalDeviceProperties(device, &device_properties);
-		vkGetPhysicalDeviceFeatures(device, &device_features);
+	/* get physical device */
+	{
+		uint devices_count;
+		vkEnumeratePhysicalDevices(vulkan.instance, &devices_count, 0);
+		VkPhysicalDevice devices[devices_count];
+		vkEnumeratePhysicalDevices(vulkan.instance, &devices_count, devices);
 
-		/* check properties and features */
-		bit suitable = device_properties.deviceType = VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && device_features.geometryShader;
-		if (!suitable) continue;
-
-		/* check extensions */
+		/* determine if the device is suitable */
+		for (uint i = 0; i < devices_count; ++i)
 		{
-			uint extensions_count;
-			vkEnumerateDeviceExtensionProperties(device, 0, &extensions_count, 0);
-			VkExtensionProperties extension_properties[extensions_count];
-			vkEnumerateDeviceExtensionProperties(device, 0, &extensions_count, extension_properties);
-			for (uint i = 0; i < vulkan_physical_device_extensions_count; ++i)
+			VkPhysicalDevice device = devices[i];
+
+			VkPhysicalDeviceProperties device_properties;
+			VkPhysicalDeviceFeatures device_features;
+			vkGetPhysicalDeviceProperties(device, &device_properties);
+			vkGetPhysicalDeviceFeatures(device, &device_features);
+
+			/* check properties and features */
+			bit suitable = device_properties.deviceType = VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && device_features.geometryShader;
+			if (!suitable) continue;
+
+			/* check extensions */
 			{
-				bit good = 0;
-				for (uint j = 0; j < extensions_count; ++j)
+				uint extensions_count;
+				vkEnumerateDeviceExtensionProperties(device, 0, &extensions_count, 0);
+				VkExtensionProperties extension_properties[extensions_count];
+				vkEnumerateDeviceExtensionProperties(device, 0, &extensions_count, extension_properties);
+				for (uint i = 0; i < physical_device_extensions_count; ++i)
 				{
-					if (!compare_string(extension_properties[j].extensionName, vulkan_physical_device_extension_names[i]))
+					bit good = 0;
+					for (uint j = 0; j < extensions_count; ++j)
 					{
-						good = 1;
+						if (!compare_string(extension_properties[j].extensionName, physical_device_extension_names[i]))
+						{
+							good = 1;
+							break;
+						}
+					}
+					if (!good)
+					{
+						suitable = 0;
 						break;
 					}
 				}
-				if (!good)
+			}
+			if (!suitable) continue;
+
+			uint graphics_queue_family = -1;
+			uint presentation_queue_family = -1;
+
+			/* check queue families */
+			{
+				uint families_count;
+				vkGetPhysicalDeviceQueueFamilyProperties(device, &families_count, 0);
+				VkQueueFamilyProperties family_properties[families_count];
+				vkGetPhysicalDeviceQueueFamilyProperties(device, &families_count, family_properties);
+				for (uint i = 0; i < families_count; ++i)
 				{
-					suitable = 0;
-					break;
+					VkQueueFamilyProperties *properties = &family_properties[i];
+					if ((graphics_queue_family == -1) && (properties->queueFlags & VK_QUEUE_GRAPHICS_BIT)) graphics_queue_family = i;
+					if (presentation_queue_family == -1)
+					{
+						VkBool32 presentation_supported;
+						vkGetPhysicalDeviceSurfaceSupportKHR(device, i, vulkan.surface, &presentation_supported);
+						if (presentation_supported) presentation_queue_family = i;
+					}
 				}
+
+				bit all_families_found = graphics_queue_family != -1 && presentation_queue_family != -1;
+				if (!all_families_found) suitable = 0;
 			}
-		}
-		if (!suitable) continue;
+			if (!suitable) continue;
 
-		uint graphics_queue_family = -1;
-		uint presentation_queue_family = -1;
+			uint       surface_images_count;
+			VkExtent2D surface_extent;
 
-		/* check queue families */
-		{
-			uint families_count;
-			vkGetPhysicalDeviceQueueFamilyProperties(device, &families_count, 0);
-			VkQueueFamilyProperties family_properties[families_count];
-			vkGetPhysicalDeviceQueueFamilyProperties(device, &families_count, family_properties);
-			for (uint i = 0; i < families_count; ++i)
+			/* check surface capabilities */
 			{
-				VkQueueFamilyProperties *properties = &family_properties[i];
-				if ((graphics_queue_family == -1) && (properties->queueFlags & VK_QUEUE_GRAPHICS_BIT)) graphics_queue_family = i;
-				if (presentation_queue_family == -1)
+				VkSurfaceCapabilitiesKHR capabilities;
+				vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, vulkan.surface, &capabilities);
+				surface_images_count = capabilities.minImageCount;
+				if (capabilities.currentExtent.width == UINT_MAXIMUM)
 				{
-					VkBool32 presentation_supported;
-					vkGetPhysicalDeviceSurfaceSupportKHR(device, i, vulkan.surface, &presentation_supported);
-					if (presentation_supported) presentation_queue_family = i;
+					rect rect;
+					get_window_rect(&rect);
+					surface_extent.width = clamp(rect.right - rect.left, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
+					surface_extent.height = clamp(rect.base - rect.top, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
 				}
+				else surface_extent = capabilities.currentExtent;
 			}
 
-			bit all_families_found = graphics_queue_family != -1 && presentation_queue_family != -1;
-			if (!all_families_found) suitable = 0;
-		}
-		if (!suitable) continue;
+			VkSurfaceFormatKHR surface_format;
 
-		uint       surface_images_count;
-		VkExtent2D surface_extent;
-
-		/* check surface capabilities */
-		{
-			VkSurfaceCapabilitiesKHR capabilities;
-			vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, vulkan.surface, &capabilities);
-			surface_images_count = capabilities.minImageCount;
-			if (capabilities.currentExtent.width == UINT_MAXIMUM)
+			/* check surface formats */
 			{
-				rect rect;
-				get_window_rect(&rect);
-				surface_extent.width = clamp(rect.right - rect.left, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
-				surface_extent.height = clamp(rect.base - rect.top, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
-			}
-			else surface_extent = capabilities.currentExtent;
-		}
+				uint formats_count;
+				vkGetPhysicalDeviceSurfaceFormatsKHR(device, vulkan.surface, &formats_count, 0);
+				VkSurfaceFormatKHR formats[formats_count];
+				vkGetPhysicalDeviceSurfaceFormatsKHR(device, vulkan.surface, &formats_count, formats);
 
-		VkSurfaceFormatKHR surface_format;
-
-		/* check surface formats */
-		{
-			uint formats_count;
-			vkGetPhysicalDeviceSurfaceFormatsKHR(device, vulkan.surface, &formats_count, 0);
-			VkSurfaceFormatKHR formats[formats_count];
-			vkGetPhysicalDeviceSurfaceFormatsKHR(device, vulkan.surface, &formats_count, formats);
-
-			bit found = 0;
-			for (uint i = 0; i < formats_count; ++i)
-			{
-				VkSurfaceFormatKHR *format = &formats[i];
-				if ((format->format == VK_FORMAT_B8G8R8A8_SRGB) && (format->colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR))
+				bit found = 0;
+				for (uint i = 0; i < formats_count; ++i)
 				{
-					found = 1;
-					surface_format = *format;
-					break;
+					VkSurfaceFormatKHR *format = &formats[i];
+					if ((format->format == VK_FORMAT_B8G8R8A8_SRGB) && (format->colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR))
+					{
+						found = 1;
+						surface_format = *format;
+						break;
+					}
 				}
+				if (!found) suitable = 0;
 			}
-			if (!found) suitable = 0;
-		}
-		if (!suitable) continue;
+			if (!suitable) continue;
 
-		VkPresentModeKHR surface_presentation_mode;
+			VkPresentModeKHR surface_presentation_mode;
 
-		/* check surface presentation modes  */
-		{
-			uint presentation_modes_count;
-			vkGetPhysicalDeviceSurfacePresentModesKHR(device, vulkan.surface, &presentation_modes_count, 0);
-			VkPresentModeKHR presentation_modes[presentation_modes_count];
-			vkGetPhysicalDeviceSurfacePresentModesKHR(device, vulkan.surface, &presentation_modes_count, presentation_modes);
-
-			bit found = 0;
-			for (uint i = 0; i < presentation_modes_count; ++i)
+			/* check surface presentation modes  */
 			{
-				VkPresentModeKHR presentation_mode = presentation_modes[i];
-				if (presentation_mode == VK_PRESENT_MODE_MAILBOX_KHR)
+				uint presentation_modes_count;
+				vkGetPhysicalDeviceSurfacePresentModesKHR(device, vulkan.surface, &presentation_modes_count, 0);
+				VkPresentModeKHR presentation_modes[presentation_modes_count];
+				vkGetPhysicalDeviceSurfacePresentModesKHR(device, vulkan.surface, &presentation_modes_count, presentation_modes);
+
+				bit found = 0;
+				for (uint i = 0; i < presentation_modes_count; ++i)
 				{
-					found = 1;
-					surface_presentation_mode = presentation_mode;
-					break;
+					VkPresentModeKHR presentation_mode = presentation_modes[i];
+					if (presentation_mode == VK_PRESENT_MODE_MAILBOX_KHR)
+					{
+						found = 1;
+						surface_presentation_mode = presentation_mode;
+						break;
+					}
 				}
+				if (!found) surface_presentation_mode = VK_PRESENT_MODE_FIFO_KHR;
+				if (!presentation_modes_count) suitable = 0;
 			}
-			if (!found) surface_presentation_mode = VK_PRESENT_MODE_FIFO_KHR;
-			if (!presentation_modes_count) suitable = 0;
+			if (!suitable) continue;
+			report_comment("using GPU: %s\n", device_properties.deviceName);
+			vulkan.physical_device             = device;
+			vulkan.graphics_queue_family       = graphics_queue_family;
+			vulkan.presentation_queue_family   = presentation_queue_family;
+			vulkan.swapchain_images_capacity   = surface_images_count + 1;
+			vulkan.swapchain_image_extent      = surface_extent;
+			vulkan.swapchain_image_format      = surface_format;
+			vulkan.swapchain_presentation_mode = surface_presentation_mode;
+			break;
 		}
-		if (!suitable) continue;
-		report_comment("using GPU: %s\n", device_properties.deviceName);
-		vulkan.physical_device             = device;
-		vulkan.graphics_queue_family       = graphics_queue_family;
-		vulkan.presentation_queue_family   = presentation_queue_family;
-		vulkan.swapchain_images_capacity   = surface_images_count + 1;
-		vulkan.swapchain_image_extent      = surface_extent;
-		vulkan.swapchain_image_format      = surface_format;
-		vulkan.swapchain_presentation_mode = surface_presentation_mode;
-		break;
-	}
-	assert(vulkan.physical_device);
-}
-
-void create_vulkan_device(void)
-{
-	float32 priority = 1.f;
-	uint queue_creation_infos_count = 0;
-	VkDeviceQueueCreateInfo queue_creation_infos[VULKAN_QUEUES_COUNT];
-	for (uint i = 0; i < VULKAN_QUEUES_COUNT; ++i)
-	{
-		uint queue_family = vulkan.queue_families[i];
-		bit unique = 1;
-		for (uint j = 0; j < queue_creation_infos_count; ++j)
-		{
-			if (queue_family == queue_creation_infos[j].queueFamilyIndex)
-			{
-				unique = 0;
-				break;
-			}
-		}
-		if (unique)
-		{
-			queue_creation_infos[queue_creation_infos_count++] = (VkDeviceQueueCreateInfo)
-			{
-				.sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-				.pNext            = 0,
-				.flags            = 0,
-				.queueFamilyIndex = queue_family,
-				.queueCount       = 1,
-				.pQueuePriorities = &priority,
-			};
-		}
+		assert(vulkan.physical_device);
 	}
 
-	VkPhysicalDeviceFeatures physical_device_features = {};
-	VkDeviceCreateInfo device_creation_info =
+	/* create device */
 	{
-		.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-		.pNext                   = 0,
-		.flags                   = 0,
-		.queueCreateInfoCount    = queue_creation_infos_count,
-		.pQueueCreateInfos       = queue_creation_infos,
-		.enabledLayerCount       = 0,
-		.ppEnabledLayerNames     = 0,
-		.enabledExtensionCount   = vulkan_physical_device_extensions_count,
-		.ppEnabledExtensionNames = vulkan_physical_device_extension_names,
-		.pEnabledFeatures        = &physical_device_features,
-	};
-	assert_vulkan_result(vkCreateDevice(vulkan.physical_device, &device_creation_info, 0, &vulkan.device));
+		float32 priority = 1.f;
+		uint queue_creation_infos_count = 0;
+		VkDeviceQueueCreateInfo queue_creation_infos[VULKAN_QUEUES_COUNT];
+		for (uint i = 0; i < VULKAN_QUEUES_COUNT; ++i)
+		{
+			uint queue_family = vulkan.queue_families[i];
+			bit unique = 1;
+			for (uint j = 0; j < queue_creation_infos_count; ++j)
+			{
+				if (queue_family == queue_creation_infos[j].queueFamilyIndex)
+				{
+					unique = 0;
+					break;
+				}
+			}
+			if (unique)
+			{
+				queue_creation_infos[queue_creation_infos_count++] = (VkDeviceQueueCreateInfo)
+				{
+					.sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+					.pNext            = 0,
+					.flags            = 0,
+					.queueFamilyIndex = queue_family,
+					.queueCount       = 1,
+					.pQueuePriorities = &priority,
+				};
+			}
+		}
 
-	for (uint i = 0; i < VULKAN_QUEUES_COUNT; ++i)
-	{
-		vkGetDeviceQueue(vulkan.device, vulkan.queue_families[i], 0, &vulkan.queues[i]);
+		VkPhysicalDeviceFeatures physical_device_features = {};
+		VkDeviceCreateInfo device_creation_info =
+		{
+			.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+			.pNext                   = 0,
+			.flags                   = 0,
+			.queueCreateInfoCount    = queue_creation_infos_count,
+			.pQueueCreateInfos       = queue_creation_infos,
+			.enabledLayerCount       = 0,
+			.ppEnabledLayerNames     = 0,
+			.enabledExtensionCount   = physical_device_extensions_count,
+			.ppEnabledExtensionNames = physical_device_extension_names,
+			.pEnabledFeatures        = &physical_device_features,
+		};
+		assert_vulkan_result(vkCreateDevice(vulkan.physical_device, &device_creation_info, 0, &vulkan.device));
+
+		for (uint i = 0; i < VULKAN_QUEUES_COUNT; ++i)
+		{
+			vkGetDeviceQueue(vulkan.device, vulkan.queue_families[i], 0, &vulkan.queues[i]);
+		}
 	}
 }
 
 int main(void)
 {
 	initialize();
-
-	get_vulkan_physical_device();
-	create_vulkan_device();
+	initialize_vulkan();
 
 	/* compile shaders */
 #if 0
